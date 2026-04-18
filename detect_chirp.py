@@ -5,21 +5,14 @@ Each detected chirp is followed by a 2-second chunk that is exported.
 """
 
 import argparse
+from importlib import reload
+
 from pathlib import Path
 
 import numpy as np
+import utils
+reload(utils)
 
-
-def read_pcm(path: Path, dtype: np.dtype, channels: int):
-    """Read raw PCM, return (full_data, mono_float32)."""
-    raw = np.fromfile(path, dtype=dtype)
-    if channels > 1:
-        raw = raw[: raw.size - (raw.size % channels)]
-        data = raw.reshape(-1, channels)
-    else:
-        data = raw.reshape(-1, 1)
-    mono = data.mean(axis=1).astype(np.float32)
-    return data, mono
 
 def find_peaks_numpy(signal, height=None, distance=1):
     signal = np.asarray(signal)
@@ -84,15 +77,17 @@ def main():
                    help="PCM sample type")
     p.add_argument("--chunk-sec", type=float, default=2.0,
                    help="Length of segment to extract after each chirp (s)")
-    p.add_argument("--threshold", type=float, default=0.8,
+    p.add_argument("--threshold", type=float, default=0.6,
                    help="Normalized correlation peak threshold (0-1)")
+    p.add_argument("--chirp-delay", type=float, default=0.5,
+                   help="Delay after chirp before extracting chunk (s)")
     args = p.parse_args()
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     dtype = np.dtype(args.dtype)
 
     # Load audio
-    full_data, mono = read_pcm(args.input_pcm, dtype=dtype, channels=args.channels)
+    full_data, left, right = utils.read_pcm_stereo(args.input_pcm, dtype=dtype, channels=args.channels)
     print(f"Loaded {args.input_pcm}: {full_data.shape[0]} samples, "
           f"{full_data.shape[0] / args.sample_rate:.2f}s")
 
@@ -103,45 +98,45 @@ def main():
     dtype = np.int16      # common PCM format
 
     # Load raw PCM
-    raw = np.fromfile(chirp_path, dtype=dtype)
-    ref_chirp = raw
+    _, ref_chirp = utils.read_pcm_mono(chirp_path, dtype=dtype, channels=channels)
     
     print(f"Loaded reference chirp: {ref_chirp.shape[0]} samples, "
           f"{ref_chirp.shape[0] / sample_rate:.2f}s")
     
-    chirp_starts = detect_chirps(mono, ref_chirp, args.sample_rate,
-                                 peak_threshold=args.threshold)
+    for ch_idx, (ch_data, ch_label) in enumerate([(left, "L"), (right, "R")]):
+        chirp_starts = detect_chirps(ch_data, ref_chirp, args.sample_rate,
+                                    peak_threshold=args.threshold)
 
-    if not chirp_starts:
-        print("No chirps detected.")
-        return
+        if not chirp_starts:
+            print("No chirps detected.")
+            return
 
-    chirp_len = ref_chirp.shape[0]
-    chunk_len = int(args.chunk_sec * args.sample_rate)
-    total_samples = full_data.shape[0]
+        chirp_len = ref_chirp.shape[0]
+        chunk_len = int(args.chunk_sec * args.sample_rate)
+        total_samples = full_data.shape[0]
 
-    print(f"Found {len(chirp_starts)} chirp(s):")
-    stem = args.input_pcm.stem
-    exported = 0
+        print(f"Found {len(chirp_starts)} chirp(s):")
+        stem = args.input_pcm.stem
+        exported = 0
 
-    for i, cs in enumerate(chirp_starts, 1):
-        chirp_end = cs + chirp_len
-        seg_start = chirp_end
-        seg_end = min(seg_start + chunk_len, total_samples)
+        for i, cs in enumerate(chirp_starts, 1):
+            chirp_end = cs + chirp_len
+            seg_start = chirp_end + int(args.chirp_delay * args.sample_rate)
+            seg_end = min(seg_start + chunk_len, total_samples)
 
-        print(f"  chirp {i}: {cs / args.sample_rate:.3f}s, "
-              f"chunk: {seg_start / args.sample_rate:.3f}s – {seg_end / args.sample_rate:.3f}s "
-              f"({(seg_end - seg_start) / args.sample_rate:.2f}s)")
+            print(f"  chirp {i}: {cs / args.sample_rate:.3f}s, "
+                f"chunk: {seg_start / args.sample_rate:.3f}s – {seg_end / args.sample_rate:.3f}s "
+                f"({(seg_end - seg_start) / args.sample_rate:.2f}s)")
 
-        if seg_end <= seg_start:
-            continue
+            if seg_end <= seg_start:
+                continue
 
-        chunk = full_data[seg_start:seg_end]
-        out_path = args.output_dir / f"{stem}_chunk_{i:04d}.pcm"
-        chunk.astype(dtype, copy=False).reshape(-1).tofile(out_path)
-        exported += 1
+            chunk = full_data[seg_start:seg_end]
+            out_path = args.output_dir / f"{stem}_chunk_{ch_label}_{i:04d}.pcm"
+            chunk.astype(dtype, copy=False).reshape(-1).tofile(out_path)
+            exported += 1
 
-    print(f"Exported {exported} chunk(s) to: {args.output_dir}")
+        print(f"Exported {exported} chunk(s) to: {args.output_dir}")
 
 
 if __name__ == "__main__":
