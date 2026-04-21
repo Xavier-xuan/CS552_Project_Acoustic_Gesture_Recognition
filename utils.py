@@ -1,6 +1,6 @@
-# import matplotlib.pyplot as plt
 from pathlib import Path
 import numpy as np
+from scipy.signal import find_peaks, fftconvolve
 
 def read_pcm_mono(path: Path, dtype: np.dtype, channels: int):
     """Read raw PCM, return (full_data, mono_float32)."""
@@ -37,6 +37,8 @@ def read_pcm_stereo(path: Path, dtype: np.dtype, channels: int):
     return data, left, right
 
 def plot_spectrogram(signal, sample_rate, channels=2, title="Spectrogram"):
+    import matplotlib.pyplot as plt
+
     plt.figure(figsize=(10, 6))
     if channels > 1:
         for ch in range(channels):
@@ -53,15 +55,23 @@ def plot_spectrogram(signal, sample_rate, channels=2, title="Spectrogram"):
     plt.tight_layout()
     plt.show()
     
-def plot_correlation(ref, sig, sample_rate):
+def plot_correlation(ref, sig, sample_rate, prominence=0.5):
+    import matplotlib.pyplot as plt
+
     # Normalize
     ref = ref / (np.linalg.norm(ref) + 1e-12)
     sig = sig / (np.max(np.abs(sig)) + 1e-12)
 
-    # Cross-correlation
-    corr = np.correlate(sig, ref, mode='valid') / len(ref)
+    # Cross-correlation via FFT (equivalent to np.correlate 'valid', much faster)
+    corr = fftconvolve(sig, ref[::-1], mode='valid') / len(ref)
     corr = np.abs(corr)
     corr /= (np.max(corr) + 1e-12)
+
+    peak_indices, _ = find_peaks(
+        corr,
+        distance=max(1, len(ref)),
+        prominence=prominence,
+    )
 
     # Time axis
     time_axis = np.arange(len(corr)) / sample_rate
@@ -69,10 +79,18 @@ def plot_correlation(ref, sig, sample_rate):
     # Plot
     plt.figure(figsize=(14, 4))
     plt.plot(time_axis, corr, linewidth=0.8)
+    if len(peak_indices) > 0:
+        plt.scatter(
+            time_axis[peak_indices],
+            corr[peak_indices],
+            color='r',
+            s=24,
+            label='Detected Peaks',
+            zorder=3,
+        )
     plt.xlabel("Time (s)")
     plt.ylabel("Normalized Correlation")
     plt.title("Cross-Correlation: Reference Chirp vs sample_lowerA")
-    plt.axhline(y=0.8, color='r', linestyle='--', label='Threshold (0.8)')
     plt.legend()
     plt.tight_layout()
     plt.show()
