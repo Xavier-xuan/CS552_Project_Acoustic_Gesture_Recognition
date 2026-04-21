@@ -63,3 +63,6 @@ target/
 
 # Notebook Checkpoints
 .ipynb_checkpoints/
+
+# MacOS Stuff
+.DS_Store
