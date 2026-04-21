@@ -23,41 +23,36 @@ def resample_1d(curve: np.ndarray, target_len: int) -> np.ndarray:
     return np.interp(x_new, x_old, curve)
 
 
-def build_feature_vector(
-    left_reg: np.ndarray,
-    right_reg: np.ndarray,
+def build_feature_vector_aggregated(
+    left_agg: np.ndarray,
+    right_agg: np.ndarray,
     left_freq: np.ndarray,
     right_freq: np.ndarray,
     target_len: int,
     dec_rate: int = 3000,
 ) -> np.ndarray:
-    # Static removal: subtract 2–3 s window mean as DC reference
+    """Feature vector from a single aggregated (mean or regression) L/R curve."""
     ref_s, ref_e = 2 * dec_rate, 3 * dec_rate
-    left = left_reg.astype(np.float64) - np.mean(left_reg[ref_s:ref_e])
-    right = right_reg.astype(np.float64) - np.mean(right_reg[ref_s:ref_e])
+    left = left_agg.astype(np.float64) - np.mean(left_agg[ref_s:ref_e])
+    right = right_agg.astype(np.float64) - np.mean(right_agg[ref_s:ref_e])
 
-    # Use only the first 1 second (gesture window)
     left = resample_1d(left[:dec_rate], target_len)
     right = resample_1d(right[:dec_rate], target_len)
 
-    # Joint shape normalization (preserves L/R relative magnitude)
     joint_mean = np.mean(np.concatenate([left, right]))
     joint_std = np.std(np.concatenate([left, right])) + 1e-8
     left = (left - joint_mean) / joint_std
     right = (right - joint_mean) / joint_std
 
-    # Velocity and acceleration
     left_vel = np.gradient(left)
     right_vel = np.gradient(right)
     left_acc = np.gradient(left_vel)
     right_acc = np.gradient(right_vel)
 
-    # Normalised 2D trajectory direction (unit tangent)
     speed = np.sqrt(left_vel ** 2 + right_vel ** 2) + 1e-8
     traj_dir_l = left_vel / speed
     traj_dir_r = right_vel / speed
 
-    # Per-frequency spread in the first 1 s
     left_spread = resample_1d(left_freq.std(axis=0)[:dec_rate], target_len)
     right_spread = resample_1d(right_freq.std(axis=0)[:dec_rate], target_len)
     left_spread = (left_spread - left_spread.mean()) / (left_spread.std() + 1e-8)
@@ -72,7 +67,42 @@ def build_feature_vector(
     ]).astype(np.float32)
 
 
-def load_dataset(iq_root: Path, target_len: int):
+def build_feature_vector_per_freq(
+    left_freq: np.ndarray,
+    right_freq: np.ndarray,
+    target_len: int,
+    dec_rate: int = 3000,
+) -> np.ndarray:
+    """Feature vector from all 16 per-frequency L/R curves concatenated."""
+    ref_s, ref_e = 2 * dec_rate, 3 * dec_rate
+    num_freqs = left_freq.shape[0]
+
+    parts = []
+    for f in range(num_freqs):
+        lf = left_freq[f].astype(np.float64) - np.mean(left_freq[f, ref_s:ref_e])
+        rf = right_freq[f].astype(np.float64) - np.mean(right_freq[f, ref_s:ref_e])
+
+        lf = resample_1d(lf[:dec_rate], target_len)
+        rf = resample_1d(rf[:dec_rate], target_len)
+
+        joint_mean = np.mean(np.concatenate([lf, rf]))
+        joint_std = np.std(np.concatenate([lf, rf])) + 1e-8
+        lf = (lf - joint_mean) / joint_std
+        rf = (rf - joint_mean) / joint_std
+
+        parts.extend([lf, rf])
+
+    return np.concatenate(parts).astype(np.float32)
+
+
+SIGNAL_TYPES = {
+    "mean": "Mean-aggregated distance",
+    "regression": "Regression-fused distance",
+    "per_freq": "Raw per-frequency distances (16 freqs)",
+}
+
+
+def load_dataset(iq_root: Path, target_len: int, signal_type: str):
     features, labels, sources, subjects = [], [], [], []
 
     for path in sorted(iq_root.rglob("*.npz")):
@@ -80,20 +110,31 @@ def load_dataset(iq_root: Path, target_len: int):
             gesture = str(data["gesture"])
             subject = str(data["subject"])
             dec_rate = int(float(data["new_sample_rate"]))
-            left_reg = data["left_mean_distance"].astype(np.float32)
-            right_reg = data["right_mean_distance"].astype(np.float32)
             left_freq = data["left_per_freq_distance"].astype(np.float32)
             right_freq = data["right_per_freq_distance"].astype(np.float32)
 
-        for idx in range(left_reg.shape[0]):
-            features.append(
-                build_feature_vector(
-                    left_reg[idx], right_reg[idx],
-                    left_freq[idx], right_freq[idx],
-                    target_len,
-                    dec_rate=dec_rate,
+            if signal_type == "mean":
+                left_agg = data["left_mean_distance"].astype(np.float32)
+                right_agg = data["right_mean_distance"].astype(np.float32)
+            elif signal_type == "regression":
+                left_agg = data["left_regression_distance"].astype(np.float32)
+                right_agg = data["right_regression_distance"].astype(np.float32)
+            else:
+                left_agg = right_agg = None
+
+        num_chunks = left_freq.shape[0]
+        for idx in range(num_chunks):
+            if signal_type == "per_freq":
+                feat = build_feature_vector_per_freq(
+                    left_freq[idx], right_freq[idx], target_len, dec_rate=dec_rate
                 )
-            )
+            else:
+                feat = build_feature_vector_aggregated(
+                    left_agg[idx], right_agg[idx],
+                    left_freq[idx], right_freq[idx],
+                    target_len, dec_rate=dec_rate,
+                )
+            features.append(feat)
             labels.append(gesture)
             subjects.append(subject)
             sources.append(f"{path.stem}#{idx:02d}")
@@ -104,16 +145,29 @@ def load_dataset(iq_root: Path, target_len: int):
     return np.stack(features), np.array(labels), np.array(subjects), sources
 
 
-def run_tsne(X_reduced: np.ndarray, perplexity: float, random_state: int) -> np.ndarray:
+def reduce_features(X: np.ndarray, pca_dims: int, random_state: int):
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X).astype(np.float64)
+    X_scaled = np.nan_to_num(X_scaled, nan=0.0, posinf=0.0, neginf=0.0)
+
+    pca_dims = min(pca_dims, X_scaled.shape[0] - 1, X_scaled.shape[1])
+    pca = PCA(n_components=pca_dims, svd_solver="full", random_state=random_state)
+    X_reduced = pca.fit_transform(X_scaled)
+    var_explained = pca.explained_variance_ratio_.cumsum()[-1]
+    return X_reduced, pca_dims, var_explained
+
+
+def run_tsne(X_reduced: np.ndarray, perplexity: float, random_state: int):
     perplexity = min(perplexity, max(5.0, (X_reduced.shape[0] - 1) / 3.0))
-    return TSNE(
+    emb = TSNE(
         n_components=2,
         perplexity=perplexity,
         init="pca",
         learning_rate="auto",
         max_iter=2000,
         random_state=random_state,
-    ).fit_transform(X_reduced), perplexity
+    ).fit_transform(X_reduced)
+    return emb, perplexity
 
 
 def plot_embedding(ax, embedding, labels, subjects, sources, title, cmap_name="tab10"):
@@ -139,7 +193,6 @@ def plot_embedding(ax, embedding, labels, subjects, sources, title, cmap_name="t
                 zorder=3,
             )
 
-    # Annotate chunk index on each point
     for i, src in enumerate(sources):
         chunk_idx = src.split("#")[-1]
         ax.annotate(
@@ -149,11 +202,28 @@ def plot_embedding(ax, embedding, labels, subjects, sources, title, cmap_name="t
             xytext=(3, 3), textcoords="offset points",
         )
 
-    ax.set_title(title, fontsize=10)
+    ax.set_title(title, fontsize=9)
     ax.set_xlabel("t-SNE 1", fontsize=8)
     ax.set_ylabel("t-SNE 2", fontsize=8)
     ax.grid(alpha=0.2)
     ax.legend(fontsize=7, ncol=2, loc="best")
+
+
+def run_single_type(iq_root, signal_type, target_len, pca_dims, perplexities, random_state):
+    print(f"\n=== {SIGNAL_TYPES[signal_type]} ===")
+    X, labels, subjects, sources = load_dataset(iq_root, target_len, signal_type)
+    print(f"  samples={X.shape[0]}, feature_dim={X.shape[1]}")
+
+    X_reduced, used_dims, var_exp = reduce_features(X, pca_dims, random_state)
+    print(f"  PCA {used_dims}d explains {var_exp:.1%} variance")
+
+    results = []
+    for perp in perplexities:
+        print(f"  t-SNE perplexity={perp}...")
+        emb, used_perp = run_tsne(X_reduced, perp, random_state)
+        results.append((emb, used_perp))
+
+    return results, labels, subjects, sources, X.shape[1], used_dims, var_exp
 
 
 def main():
@@ -162,71 +232,84 @@ def main():
                         default=Path("data") / "preliminary_data" / "IQ")
     parser.add_argument("--output", type=Path,
                         default=Path("data") / "preliminary_data" / "visualizations" / "05_tsne_projection.png")
-    parser.add_argument("--target-len", type=int, default=150,
-                        help="Resample length for regression curves")
-    parser.add_argument("--pca-dims", type=int, default=30,
-                        help="PCA dims before t-SNE")
+    parser.add_argument("--signal-type", choices=list(SIGNAL_TYPES) + ["compare"], default="compare",
+                        help="Signal aggregation type. 'compare' runs all three side by side.")
+    parser.add_argument("--target-len", type=int, default=150)
+    parser.add_argument("--pca-dims", type=int, default=30)
     parser.add_argument("--perplexity", type=float, default=None,
-                        help="Single perplexity (default: show 4 values)")
+                        help="Single perplexity (default: two values)")
     parser.add_argument("--random-state", type=int, default=42)
     args = parser.parse_args()
 
-    print("Loading dataset...")
-    X, labels, subjects, sources = load_dataset(args.iq_root, args.target_len)
-    print(f"  samples={X.shape[0]}, feature_dim={X.shape[1]}")
-    print(f"  gestures: {sorted(set(labels.tolist()))}")
-    print(f"  subjects: {sorted(set(subjects.tolist()))}")
-
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X).astype(np.float64)
-    X_scaled = np.nan_to_num(X_scaled, nan=0.0, posinf=0.0, neginf=0.0)
-
-    pca_dims = min(args.pca_dims, X_scaled.shape[0] - 1, X_scaled.shape[1])
-    pca = PCA(n_components=pca_dims, svd_solver="full", random_state=args.random_state)
-    X_reduced = pca.fit_transform(X_scaled)
-    var_explained = pca.explained_variance_ratio_.cumsum()[-1]
-    print(f"  PCA {pca_dims}d explains {var_explained:.1%} variance")
-
     args.output.parent.mkdir(parents=True, exist_ok=True)
 
+    # Determine perplexity values to show
     if args.perplexity is not None:
-        # Single perplexity — one plot
-        emb, used_perp = run_tsne(X_reduced, args.perplexity, args.random_state)
-        fig, ax = plt.subplots(figsize=(10, 8))
-        plot_embedding(ax, emb, labels, subjects, sources,
-                       f"t-SNE  perplexity={used_perp:.0f}  n={X.shape[0]}")
-        fig.tight_layout()
-        fig.savefig(args.output, dpi=180)
-        plt.close(fig)
-        print(f"Saved → {args.output}")
+        perplexities = [args.perplexity]
     else:
-        # 2×2 grid with four perplexity values for easy comparison
-        n = X_reduced.shape[0]
-        candidate_perps = [5.0, max(10.0, n / 10), max(20.0, n / 5), max(30.0, n / 3)]
-        candidate_perps = sorted(set(round(p) for p in candidate_perps))[:4]
+        # Peek at sample count to set sensible defaults
+        n_samples = sum(
+            np.load(p)["left_per_freq_distance"].shape[0]
+            for p in sorted(args.iq_root.rglob("*.npz"))
+        )
+        perplexities = sorted({5.0, round(max(10.0, n_samples / 10))})
 
-        ncols = 2
-        nrows = (len(candidate_perps) + 1) // 2
-        fig, axes = plt.subplots(nrows, ncols, figsize=(14, 6 * nrows))
+    if args.signal_type != "compare":
+        # Single signal type, grid of perplexity values
+        results, labels, subjects, sources, feat_dim, pca_d, var_exp = run_single_type(
+            args.iq_root, args.signal_type, args.target_len,
+            args.pca_dims, perplexities, args.random_state,
+        )
+        ncols = min(2, len(perplexities))
+        nrows = (len(perplexities) + ncols - 1) // ncols
+        fig, axes = plt.subplots(nrows, ncols, figsize=(7 * ncols, 6 * nrows))
         axes = np.array(axes).reshape(-1)
 
-        for ax, perp in zip(axes, candidate_perps):
-            print(f"  Running t-SNE perplexity={perp}...")
-            emb, used_perp = run_tsne(X_reduced, perp, args.random_state)
+        for ax, (emb, used_perp) in zip(axes, results):
             plot_embedding(ax, emb, labels, subjects, sources,
-                           f"t-SNE  perplexity={used_perp:.0f}  n={n}")
-
-        for ax in axes[len(candidate_perps):]:
+                           f"{SIGNAL_TYPES[args.signal_type]}\nt-SNE perp={used_perp:.0f}  n={len(labels)}")
+        for ax in axes[len(results):]:
             ax.set_visible(False)
 
         fig.suptitle(
-            f"Gesture t-SNE  |  features={X.shape[1]}d → PCA {pca_dims}d ({var_explained:.0%} var)",
+            f"{SIGNAL_TYPES[args.signal_type]}  |  feat={feat_dim}d → PCA {pca_d}d ({var_exp:.0%} var)",
             fontsize=11,
         )
         fig.tight_layout()
         fig.savefig(args.output, dpi=180)
         plt.close(fig)
-        print(f"Saved → {args.output}")
+        print(f"\nSaved → {args.output}")
+
+    else:
+        # Compare all 3 signal types: rows = perplexity, cols = signal type
+        signal_types = list(SIGNAL_TYPES.keys())
+        nrows = len(perplexities)
+        ncols = len(signal_types)
+
+        fig, axes = plt.subplots(nrows, ncols, figsize=(7 * ncols, 6 * nrows))
+        axes = np.array(axes).reshape(nrows, ncols)
+
+        type_meta = {}
+        for col, stype in enumerate(signal_types):
+            results, labels, subjects, sources, feat_dim, pca_d, var_exp = run_single_type(
+                args.iq_root, stype, args.target_len,
+                args.pca_dims, perplexities, args.random_state,
+            )
+            type_meta[stype] = (feat_dim, pca_d, var_exp)
+            for row, (emb, used_perp) in enumerate(results):
+                ax = axes[row, col]
+                plot_embedding(ax, emb, labels, subjects, sources,
+                               f"{SIGNAL_TYPES[stype]}\nperp={used_perp:.0f}  feat={feat_dim}d→PCA{pca_d}d ({var_exp:.0%})")
+
+        fig.suptitle(
+            f"Gesture t-SNE — signal aggregation comparison  |  n={len(labels)}",
+            fontsize=12,
+        )
+        fig.tight_layout()
+        out = args.output.with_name(args.output.stem + "_compare.png")
+        fig.savefig(out, dpi=180)
+        plt.close(fig)
+        print(f"\nSaved → {out}")
 
 
 if __name__ == "__main__":
