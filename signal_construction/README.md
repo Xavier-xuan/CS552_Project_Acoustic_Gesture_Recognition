@@ -1,0 +1,11 @@
+2026_04_21_10sample3sec.pcm is constructed as follows, in order:
+ - 1 sec silence
+ - 0.5 secs 3000 Hz sine, top speaker
+ - 0.5 secs 5000 Hz sine, top speaker
+ - For 10 trial:
+    - 1.5 secs Silence
+    - 0.5 secs 12kHz to 15kHz Chirp
+    - 0.5 secs Silence
+    - 3 secs 17-23 freq
+        - 0.2 sec 440Hz beep (1 sec in)
+    - 0.2 secs 660Hz beep
