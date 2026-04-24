@@ -23,21 +23,25 @@ def resample_1d(curve: np.ndarray, target_len: int) -> np.ndarray:
     return np.interp(x_new, x_old, curve)
 
 
+def gesture_segment(curve: np.ndarray) -> np.ndarray:
+    curve = curve.astype(np.float64)
+    return curve - curve[0]
+
+
 def build_feature_vector_aggregated(
     left_agg: np.ndarray,
     right_agg: np.ndarray,
     left_freq: np.ndarray,
     right_freq: np.ndarray,
     target_len: int,
-    dec_rate: int = 3000,
 ) -> np.ndarray:
     """Feature vector from a single aggregated (mean or regression) L/R curve."""
-    ref_s, ref_e = 2 * dec_rate, 3 * dec_rate
-    left = left_agg.astype(np.float64) - np.mean(left_agg[ref_s:ref_e])
-    right = right_agg.astype(np.float64) - np.mean(right_agg[ref_s:ref_e])
+    left_segment = gesture_segment(left_agg)
+    right_segment = gesture_segment(right_agg)
+    segment_len = left_segment.shape[0]
 
-    left = resample_1d(left[:dec_rate], target_len)
-    right = resample_1d(right[:dec_rate], target_len)
+    left = resample_1d(left_segment, target_len)
+    right = resample_1d(right_segment, target_len)
 
     joint_mean = np.mean(np.concatenate([left, right]))
     joint_std = np.std(np.concatenate([left, right])) + 1e-8
@@ -53,8 +57,8 @@ def build_feature_vector_aggregated(
     traj_dir_l = left_vel / speed
     traj_dir_r = right_vel / speed
 
-    left_spread = resample_1d(left_freq.std(axis=0)[:dec_rate], target_len)
-    right_spread = resample_1d(right_freq.std(axis=0)[:dec_rate], target_len)
+    left_spread = resample_1d(left_freq.std(axis=0)[:segment_len], target_len)
+    right_spread = resample_1d(right_freq.std(axis=0)[:segment_len], target_len)
     left_spread = (left_spread - left_spread.mean()) / (left_spread.std() + 1e-8)
     right_spread = (right_spread - right_spread.mean()) / (right_spread.std() + 1e-8)
 
@@ -71,19 +75,14 @@ def build_feature_vector_per_freq(
     left_freq: np.ndarray,
     right_freq: np.ndarray,
     target_len: int,
-    dec_rate: int = 3000,
 ) -> np.ndarray:
     """Feature vector from all 16 per-frequency L/R curves concatenated."""
-    ref_s, ref_e = 2 * dec_rate, 3 * dec_rate
     num_freqs = left_freq.shape[0]
 
     parts = []
     for f in range(num_freqs):
-        lf = left_freq[f].astype(np.float64) - np.mean(left_freq[f, ref_s:ref_e])
-        rf = right_freq[f].astype(np.float64) - np.mean(right_freq[f, ref_s:ref_e])
-
-        lf = resample_1d(lf[:dec_rate], target_len)
-        rf = resample_1d(rf[:dec_rate], target_len)
+        lf = resample_1d(gesture_segment(left_freq[f]), target_len)
+        rf = resample_1d(gesture_segment(right_freq[f]), target_len)
 
         joint_mean = np.mean(np.concatenate([lf, rf]))
         joint_std = np.std(np.concatenate([lf, rf])) + 1e-8
@@ -109,7 +108,6 @@ def load_dataset(iq_root: Path, target_len: int, signal_type: str):
         with np.load(path) as data:
             gesture = str(data["gesture"])
             subject = str(data["subject"])
-            dec_rate = int(float(data["new_sample_rate"]))
             left_freq = data["left_per_freq_distance"].astype(np.float32)
             right_freq = data["right_per_freq_distance"].astype(np.float32)
 
@@ -126,13 +124,13 @@ def load_dataset(iq_root: Path, target_len: int, signal_type: str):
         for idx in range(num_chunks):
             if signal_type == "per_freq":
                 feat = build_feature_vector_per_freq(
-                    left_freq[idx], right_freq[idx], target_len, dec_rate=dec_rate
+                    left_freq[idx], right_freq[idx], target_len
                 )
             else:
                 feat = build_feature_vector_aggregated(
                     left_agg[idx], right_agg[idx],
                     left_freq[idx], right_freq[idx],
-                    target_len, dec_rate=dec_rate,
+                    target_len,
                 )
             features.append(feat)
             labels.append(gesture)

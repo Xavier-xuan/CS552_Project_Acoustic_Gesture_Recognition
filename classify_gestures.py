@@ -31,7 +31,6 @@ def load_dataset(iq_root: Path, target_len: int, signal_type: str):
         with np.load(path) as data:
             gesture = str(data["gesture"])
             subject = str(data["subject"])
-            dec_rate = int(float(data["new_sample_rate"]))
             left_freq = data["left_per_freq_distance"].astype(np.float32)
             right_freq = data["right_per_freq_distance"].astype(np.float32)
 
@@ -47,13 +46,13 @@ def load_dataset(iq_root: Path, target_len: int, signal_type: str):
         for idx in range(left_freq.shape[0]):
             if signal_type == "per_freq":
                 feat = build_feature_vector_per_freq(
-                    left_freq[idx], right_freq[idx], target_len, dec_rate=dec_rate
+                    left_freq[idx], right_freq[idx], target_len
                 )
             else:
                 feat = build_feature_vector_aggregated(
                     left_agg[idx], right_agg[idx],
                     left_freq[idx], right_freq[idx],
-                    target_len, dec_rate=dec_rate,
+                    target_len,
                 )
             features.append(feat)
             labels.append(gesture)

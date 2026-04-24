@@ -6,6 +6,14 @@ from pathlib import Path
 
 import numpy as np
 
+# Set True to also save per-frequency complex dynamic IQ vectors (needed for delay-profile
+# absolute path estimation in compute_2d_coords.py).  Increases output file size ~4× per chunk.
+SAVE_IQ = False
+
+STATIC_SEC = 0.8
+IGNORE_SEC = 0.2
+GESTURE_SEC = 2.0
+
 
 def derive_gesture_dir(input_npz: Path, chunked_root: Path) -> str:
     try:
@@ -59,14 +67,36 @@ def normalize_channel(audio: np.ndarray) -> np.ndarray:
 
 def extract_path_change_curve(channel_audio: np.ndarray, carrier_freq: float,
                               sample_rate_hz: int, decimation_factor: int,
-                              difference_delay: int, stages: int) -> np.ndarray:
+                              difference_delay: int, stages: int,
+                              static_sec: float, ignore_sec: float,
+                              gesture_sec: float,
+                              return_iq: bool = False):
     baseband = down_convert(channel_audio, sample_rate_hz, carrier_freq)
     filtered = lowpass_cic_filter(baseband, decimation_factor, difference_delay, stages)
-    dec_rate = int(sample_rate_hz / decimation_factor)
-    filtered = filtered - np.mean(filtered[2 * dec_rate : 3 * dec_rate])
-    phase = np.unwrap(np.angle(filtered))
+    new_sample_rate = sample_rate_hz / decimation_factor
+    static_len = int(round(static_sec * new_sample_rate))
+    ignore_len = int(round(ignore_sec * new_sample_rate))
+    gesture_len = int(round(gesture_sec * new_sample_rate))
+    gesture_end = filtered.shape[0]
+    gesture_start = gesture_end - gesture_len
+
+    if static_len <= 0:
+        raise ValueError("static_sec must produce at least one filtered sample")
+    if gesture_start < static_len + ignore_len:
+        available_sec = filtered.shape[0] / new_sample_rate
+        raise ValueError(
+            f"Need {static_sec + ignore_sec + gesture_sec:.3f}s per chunk for "
+            f"static/ignore/gesture windows, got {available_sec:.3f}s after filtering"
+        )
+
+    filtered = filtered - np.mean(filtered[:static_len])
+    gesture_filtered = filtered[gesture_start:gesture_end]
+    phase = np.unwrap(np.angle(gesture_filtered))
     wavelength = 343.0 / carrier_freq
-    return (phase - phase[0]) * wavelength / (2 * np.pi)
+    path_change = (phase - phase[0]) * wavelength / (2 * np.pi)
+    if return_iq:
+        return path_change, gesture_filtered
+    return path_change
 
 
 def robust_multifreq_combine(path_change_curves: np.ndarray, time_axis: np.ndarray,
@@ -111,9 +141,15 @@ def robust_multifreq_combine(path_change_curves: np.ndarray, time_axis: np.ndarr
 def calculate_chunk_distances(audio_chunks: np.ndarray, carrier_freqs: np.ndarray,
                               sample_rate_hz: int, decimation_factor: int,
                               difference_delay: int, stages: int,
-                              window_ms: float, min_keep: int, sigma: float):
+                              window_ms: float, min_keep: int, sigma: float,
+                              static_sec: float, ignore_sec: float,
+                              gesture_sec: float,
+                              save_iq: bool = False):
     num_chunks = audio_chunks.shape[0]
-    filtered_len = audio_chunks.shape[1] // decimation_factor
+    new_sample_rate = sample_rate_hz / decimation_factor
+    filtered_len = int(round(gesture_sec * new_sample_rate))
+    filtered_total_len = (audio_chunks.shape[1] + decimation_factor - 1) // decimation_factor
+    gesture_start_sec = (filtered_total_len - filtered_len) / new_sample_rate
     num_freqs = carrier_freqs.shape[0]
 
     left_per_freq = np.zeros((num_chunks, num_freqs, filtered_len), dtype=np.float32)
@@ -129,7 +165,10 @@ def calculate_chunk_distances(audio_chunks: np.ndarray, carrier_freqs: np.ndarra
     right_rmse_before = np.zeros((num_chunks, filtered_len), dtype=np.float32)
     right_rmse_after = np.zeros((num_chunks, filtered_len), dtype=np.float32)
 
-    new_sample_rate = sample_rate_hz / decimation_factor
+    if save_iq:
+        left_iq = np.zeros((num_chunks, num_freqs, filtered_len), dtype=np.complex64)
+        right_iq = np.zeros((num_chunks, num_freqs, filtered_len), dtype=np.complex64)
+
     time_axis = np.arange(filtered_len, dtype=np.float64) / new_sample_rate
 
     for chunk_idx in range(num_chunks):
@@ -140,23 +179,33 @@ def calculate_chunk_distances(audio_chunks: np.ndarray, carrier_freqs: np.ndarra
         left_curves = []
         right_curves = []
 
-        for carrier_freq in carrier_freqs:
-            left_curves.append(extract_path_change_curve(
-                audio_left,
-                carrier_freq,
-                sample_rate_hz,
-                decimation_factor,
-                difference_delay,
-                stages,
-            ))
-            right_curves.append(extract_path_change_curve(
-                audio_right,
-                carrier_freq,
-                sample_rate_hz,
-                decimation_factor,
-                difference_delay,
-                stages,
-            ))
+        for f_idx, carrier_freq in enumerate(carrier_freqs):
+            if save_iq:
+                l_curve, l_filt = extract_path_change_curve(
+                    audio_left, carrier_freq, sample_rate_hz,
+                    decimation_factor, difference_delay, stages,
+                    static_sec, ignore_sec, gesture_sec, return_iq=True,
+                )
+                r_curve, r_filt = extract_path_change_curve(
+                    audio_right, carrier_freq, sample_rate_hz,
+                    decimation_factor, difference_delay, stages,
+                    static_sec, ignore_sec, gesture_sec, return_iq=True,
+                )
+                left_iq[chunk_idx, f_idx] = l_filt.astype(np.complex64)
+                right_iq[chunk_idx, f_idx] = r_filt.astype(np.complex64)
+            else:
+                l_curve = extract_path_change_curve(
+                    audio_left, carrier_freq, sample_rate_hz,
+                    decimation_factor, difference_delay, stages,
+                    static_sec, ignore_sec, gesture_sec,
+                )
+                r_curve = extract_path_change_curve(
+                    audio_right, carrier_freq, sample_rate_hz,
+                    decimation_factor, difference_delay, stages,
+                    static_sec, ignore_sec, gesture_sec,
+                )
+            left_curves.append(l_curve)
+            right_curves.append(r_curve)
 
         left_curves = np.stack(left_curves, axis=0)
         right_curves = np.stack(right_curves, axis=0)
@@ -182,9 +231,14 @@ def calculate_chunk_distances(audio_chunks: np.ndarray, carrier_freqs: np.ndarra
         right_rmse_before[chunk_idx] = right_before.astype(np.float32)
         right_rmse_after[chunk_idx] = right_after.astype(np.float32)
 
-    return {
+    out = {
         "time_axis": time_axis.astype(np.float32),
         "new_sample_rate": np.array(new_sample_rate, dtype=np.float32),
+        "static_sec": np.array(static_sec, dtype=np.float32),
+        "min_ignore_sec": np.array(ignore_sec, dtype=np.float32),
+        "ignored_sec": np.array(gesture_start_sec - static_sec, dtype=np.float32),
+        "gesture_sec": np.array(gesture_sec, dtype=np.float32),
+        "gesture_start_sec": np.array(gesture_start_sec, dtype=np.float32),
         "left_per_freq_distance": left_per_freq,
         "right_per_freq_distance": right_per_freq,
         "left_mean_distance": left_mean,
@@ -198,11 +252,17 @@ def calculate_chunk_distances(audio_chunks: np.ndarray, carrier_freqs: np.ndarra
         "right_rmse_before": right_rmse_before,
         "right_rmse_after": right_rmse_after,
     }
+    if save_iq:
+        out["left_per_freq_iq"] = left_iq
+        out["right_per_freq_iq"] = right_iq
+    return out
 
 
 def process_file(input_npz: Path, output_dir: Path, carrier_freqs: np.ndarray,
                  decimation_factor: int, difference_delay: int, stages: int,
-                 window_ms: float, min_keep: int, sigma: float):
+                 window_ms: float, min_keep: int, sigma: float,
+                 static_sec: float, ignore_sec: float, gesture_sec: float,
+                 save_iq: bool = False):
     output_dir.mkdir(parents=True, exist_ok=True)
 
     with np.load(input_npz) as chunk_data:
@@ -232,6 +292,10 @@ def process_file(input_npz: Path, output_dir: Path, carrier_freqs: np.ndarray,
         window_ms=window_ms,
         min_keep=min_keep,
         sigma=sigma,
+        static_sec=static_sec,
+        ignore_sec=ignore_sec,
+        gesture_sec=gesture_sec,
+        save_iq=save_iq,
     )
 
     out_path = output_dir / input_npz.name
@@ -289,6 +353,12 @@ def main():
                         help="Minimum number of frequencies kept per regression window")
     parser.add_argument("--sigma", type=float, default=3.0,
                         help="MAD-based outlier threshold for regression fusion")
+    parser.add_argument("--static-sec", type=float, default=STATIC_SEC,
+                        help="Seconds from the start of each chunk used for static component removal")
+    parser.add_argument("--ignore-sec", type=float, default=IGNORE_SEC,
+                        help="Seconds ignored between the static and gesture windows")
+    parser.add_argument("--gesture-sec", type=float, default=GESTURE_SEC,
+                        help="Seconds used for the output gesture-recognition distance curves")
     parser.add_argument("--force", action="store_true",
                         help="Recompute files even if outputs already exist")
     args = parser.parse_args()
@@ -330,6 +400,10 @@ def main():
             window_ms=args.window_ms,
             min_keep=args.min_keep,
             sigma=args.sigma,
+            static_sec=args.static_sec,
+            ignore_sec=args.ignore_sec,
+            gesture_sec=args.gesture_sec,
+            save_iq=SAVE_IQ,
         )
         processed += 1
 
