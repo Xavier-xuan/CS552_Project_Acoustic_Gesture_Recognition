@@ -132,8 +132,8 @@ def train_and_predict(
     return acc, per_class_acc
 
 
-DIR3 = "4-24-2026-william"
-DIR1 = "4-24-2026-xavier"
+DIR1 = "4-24-2026-william"
+DIR3 = "4-24-2026-xavier"
 DIR2 = "4-21-2026-henry_horizontal"
 
 def main():
@@ -176,9 +176,13 @@ def main():
         y_enc2 = le.transform(labels2)
         label_names = list(le.classes_)
 
+        X_red_all, var_exp = prepare(np.append(X, X2, axis=0), args.pca_dims, args.random_state)
+        X_red = X_red_all[0:X.shape[0]]
+        X_red2 = X_red_all[X.shape[0]:X_red_all.shape[0]]
+        #X_red2, var_exp = prepare(X2, args.pca_dims, args.random_state)
 
         acc, per_cls = train_and_predict(
-            X, y_enc, X2, y_enc2, label_names, stype,
+            X_red, y_enc, X_red2, y_enc2, label_names, stype,
             X.shape[1], args.random_state, ax,
         )
         summary.append((stype, acc))
