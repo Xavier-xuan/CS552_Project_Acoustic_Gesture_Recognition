@@ -87,7 +87,6 @@ def train_and_predict(
     label_names: list[str],
     signal_type: str,
     feat_dim: int,
-    var_exp: float,
     random_state: int,
     ax_cm,
 ):
@@ -125,7 +124,7 @@ def train_and_predict(
     disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=label_names)
     disp.plot(ax=ax_cm, colorbar=False, cmap="Blues")
     ax_cm.set_title(
-        f"{SIGNAL_TYPES[signal_type]}\nfeat={feat_dim}d → PCA ({var_exp:.0%})  acc={acc:.1%}",
+        f"{SIGNAL_TYPES[signal_type]}\nfeat={feat_dim}  acc={acc:.1%}",
         fontsize=9,
     )
     ax_cm.tick_params(axis="x", rotation=45)
@@ -133,9 +132,9 @@ def train_and_predict(
     return acc, per_class_acc
 
 
-DIR1 = "4-24-2026-william"
-DIR2 = "4-24-2026-xavier"
 DIR3 = "4-24-2026-william"
+DIR1 = "4-24-2026-xavier"
+DIR2 = "4-21-2026-henry_horizontal"
 
 def main():
     parser = argparse.ArgumentParser(description="XGBoost gesture classification.")
@@ -177,13 +176,10 @@ def main():
         y_enc2 = le.transform(labels2)
         label_names = list(le.classes_)
 
-        X_red, var_exp = prepare(X, args.pca_dims, args.random_state)
-        #print(f"{X_red.shape=}")
-        X_red2, var_exp = prepare(X2, args.pca_dims, args.random_state)
 
         acc, per_cls = train_and_predict(
-            X_red, y_enc, X_red2, y_enc2, label_names, stype,
-            X.shape[1], var_exp, args.random_state, ax,
+            X, y_enc, X2, y_enc2, label_names, stype,
+            X.shape[1], args.random_state, ax,
         )
         summary.append((stype, acc))
 
