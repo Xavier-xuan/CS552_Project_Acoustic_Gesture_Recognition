@@ -138,9 +138,9 @@ def train_and_predict(
     return acc, per_class_acc
 
 
-DIR3 = "4-24-2026-william"
-DIR1 = "4-24-2026-xavier"
-DIR2 = "4-21-2026-henry_horizontal"
+DIR1 = "4-24-2026-william"
+DIR2 = "4-24-2026-xavier"
+DIR3 = "4-21-2026-henry_horizontal"
 
 def main():
     parser = argparse.ArgumentParser(description="XGBoost gesture classification.")
@@ -148,10 +148,10 @@ def main():
                         default=Path("data") / DIR1 / "IQ")
     parser.add_argument("--iq-root-training2", type=Path,
                         default=Path("data") / DIR2 / "IQ")
-    parser.add_argument("--iq-root-eval", type=Path,
+    parser.add_argument("--iq-root-training3", type=Path,
                         default=Path("data") / DIR3 / "IQ")
     parser.add_argument("--output", type=Path,
-                        default=Path("data") / f"testing" / f"06_xgboost_classification_{DIR1}-{DIR2}_{DIR3}.png")
+                        default=Path("data") / f"testing" / f"06_xgboost_classification_random3_{DIR1}_{DIR2}_{DIR3}.png")
     parser.add_argument("--target-len", type=int, default=150)
     parser.add_argument("--pca-dims", type=int, default=30)
     parser.add_argument("--n-folds", type=int, default=5)
@@ -172,22 +172,36 @@ def main():
 
     for ax, stype in zip(axes, signal_types):
         print(f"\nLoading {stype}...")
-        X, labels, _, _ = load_dataset([args.iq_root_training, args.iq_root_training2], args.target_len, stype)
-        X2, labels2, _, _ = load_dataset(args.iq_root_eval, args.target_len, stype)
+        X, labels, _, _ = load_dataset([args.iq_root_training, args.iq_root_training2, args.iq_root_training3], args.target_len, stype)
         if le.classes_.size == 0 if hasattr(le, "classes_") and le.classes_.size == 0 else not hasattr(le, "classes_") or le.classes_.size == 0:
             le.fit(labels)
-        y_enc = le.transform(labels)
+        y_enc_all = le.transform(labels)
+        
+        order = np.arange(X.shape[0])
+        np.random.shuffle(order)
+        
+        bound = int(X.shape[0]*0.8)
+
+        y_enc_all = y_enc_all[order]
+        y_enc = y_enc_all[0:bound]
+        y_enc2 = y_enc_all[bound:y_enc_all.shape[0]]
+
         #print(f"{y_enc=}")
         #print(f"{X.shape=}")
-        y_enc2 = le.transform(labels2)
+        #y_enc2 = le.transform(labels2)
         label_names = list(le.classes_)
 
+        X_red_all, var_exp = prepare(X, args.pca_dims, args.random_state)
+        X_red_all = X_red_all[order]
+        X_red = X_red_all[0:bound]
+        X_red2 = X_red_all[bound:X_red_all.shape[0]]
+        #X_red2, var_exp = prepare(X2, args.pca_dims, args.random_state)
 
         X_red, _, scaler, pca = prepare(X, args.pca_dims, args.random_state)
         X2_red = apply_prepare(X2, scaler, pca)
 
         acc, per_cls = train_and_predict(
-            X_red, y_enc, X2_red, y_enc2, label_names, stype,
+            X_red, y_enc, X_red2, y_enc2, label_names, stype,
             X.shape[1], args.random_state, ax,
         )
         summary.append((stype, acc))
