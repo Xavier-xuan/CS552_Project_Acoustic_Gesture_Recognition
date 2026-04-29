@@ -43,10 +43,9 @@ def build_feature_vector_aggregated(
     left = resample_1d(left_segment, target_len)
     right = resample_1d(right_segment, target_len)
 
-    joint_mean = np.mean(np.concatenate([left, right]))
-    joint_std = np.std(np.concatenate([left, right])) + 1e-8
-    left = (left - joint_mean) / joint_std
-    right = (right - joint_mean) / joint_std
+    joint_max = np.max(np.abs(np.concatenate([left, right]))) + 1e-8
+    left = left / joint_max
+    right = right / joint_max
 
     left_vel = np.gradient(left)
     right_vel = np.gradient(right)
@@ -84,12 +83,14 @@ def build_feature_vector_per_freq(
         lf = resample_1d(gesture_segment(left_freq[f]), target_len)
         rf = resample_1d(gesture_segment(right_freq[f]), target_len)
 
-        joint_mean = np.mean(np.concatenate([lf, rf]))
-        joint_std = np.std(np.concatenate([lf, rf])) + 1e-8
-        lf = (lf - joint_mean) / joint_std
-        rf = (rf - joint_mean) / joint_std
+        joint_max = np.max(np.abs(np.concatenate([lf, rf]))) + 1e-8
+        lf = lf / joint_max
+        rf = rf / joint_max
 
-        parts.extend([lf, rf])
+        lv, rv = np.gradient(lf), np.gradient(rf)
+        la, ra = np.gradient(lv), np.gradient(rv)
+
+        parts.extend([lf, rf, lv, rv, la, ra])
 
     return np.concatenate(parts).astype(np.float32)
 

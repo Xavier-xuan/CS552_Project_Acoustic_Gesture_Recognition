@@ -11,7 +11,7 @@ from scipy.signal import find_peaks, fftconvolve
 import utils
 reload(utils)
 
-DEFAULT_CHUNK_SEC = 5.0
+DEFAULT_CHUNK_SEC = 3.0
 
 
 def parse_subject_and_gesture(input_pcm: Path):

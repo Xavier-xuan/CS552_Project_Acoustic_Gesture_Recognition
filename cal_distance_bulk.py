@@ -89,7 +89,16 @@ def extract_path_change_curve(channel_audio: np.ndarray, carrier_freq: float,
             f"static/ignore/gesture windows, got {available_sec:.3f}s after filtering"
         )
 
-    filtered = filtered - np.mean(filtered[:static_len])
+    # Fit a linear trend (DC + drift) to the static window and extrapolate
+    # over the full signal before extracting the gesture phase.
+    t = np.arange(len(filtered), dtype=np.float64)
+    t_s = t[:static_len]
+    static = filtered[:static_len]
+    real_c = np.polyfit(t_s, static.real, 1)
+    imag_c = np.polyfit(t_s, static.imag, 1)
+    baseline = np.polyval(real_c, t) + 1j * np.polyval(imag_c, t)
+    filtered = filtered - baseline
+
     gesture_filtered = filtered[gesture_start:gesture_end]
     phase = np.unwrap(np.angle(gesture_filtered))
     wavelength = 343.0 / carrier_freq

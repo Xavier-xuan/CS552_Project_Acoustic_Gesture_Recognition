@@ -5,6 +5,7 @@ Mirrors the incremental-processing pattern of cal_distance_bulk.py.
 Geometry and delay-profile settings are inherited from compute_2d_coords.py.
 """
 
+import argparse
 from pathlib import Path
 
 from compute_2d_coords import (
@@ -15,35 +16,37 @@ from compute_2d_coords import (
     compute_coords_for_npz,
 )
 
-# ── Directory constants ───────────────────────────────────────────────────────
-IQ_ROOT     = Path("data/preliminary_data/IQ")
-COORDS_ROOT = Path("data/preliminary_data/coords")
-
-# Set True to recompute files that already exist in COORDS_ROOT.
-FORCE = False
-
-
-def already_processed(input_npz: Path) -> bool:
-    rel = input_npz.relative_to(IQ_ROOT)
-    return (COORDS_ROOT / rel).exists()
-
 
 def main():
-    npz_files = sorted(IQ_ROOT.rglob("*.npz"))
+    parser = argparse.ArgumentParser(description="Bulk 2D coordinate computation from IQ NPZ files.")
+    parser.add_argument("--iq-root", type=Path, nargs="+",
+                        default=[Path("data/preliminary_data/IQ")])
+    parser.add_argument("--coords-root", type=Path,
+                        default=Path("data/preliminary_data/coords"))
+    parser.add_argument("--force", action="store_true",
+                        help="Recompute files that already exist in coords-root")
+    args = parser.parse_args()
+
+    iq_roots = args.iq_root
+    npz_files = sorted(p for root in iq_roots for p in root.rglob("*.npz"))
+
     if not npz_files:
-        print(f"No .npz files found under {IQ_ROOT}")
+        print(f"No .npz files found under {iq_roots}")
         return
 
     processed = skipped = total_chunks = 0
 
     for input_npz in npz_files:
-        if not FORCE and already_processed(input_npz):
+        # Preserve subdirectory structure under coords-root using the IQ root it came from
+        matched_root = next(r for r in iq_roots if input_npz.is_relative_to(r))
+        rel = input_npz.relative_to(matched_root.parent)
+        output_path = args.coords_root / rel
+
+        if not args.force and output_path.exists():
             print(f"Skipping already processed: {input_npz}")
             skipped += 1
             continue
 
-        rel = input_npz.relative_to(IQ_ROOT)
-        output_path = COORDS_ROOT / rel
         print(f"\nProcessing {input_npz}")
         total_chunks += compute_coords_for_npz(
             input_npz, output_path,

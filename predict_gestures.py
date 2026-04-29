@@ -77,7 +77,13 @@ def prepare(X: np.ndarray, pca_dims: int, random_state: int):
     pca = PCA(n_components=pca_dims, svd_solver="full", random_state=random_state)
     X_reduced = pca.fit_transform(X_scaled)
     var_exp = pca.explained_variance_ratio_.cumsum()[-1]
-    return X_reduced, var_exp
+    return X_reduced, var_exp, scaler, pca
+
+
+def apply_prepare(X: np.ndarray, scaler, pca) -> np.ndarray:
+    X_scaled = scaler.transform(X).astype(np.float64)
+    X_scaled = np.nan_to_num(X_scaled, nan=0.0, posinf=0.0, neginf=0.0)
+    return pca.transform(X_scaled)
 
 def train_and_predict(
     X: np.ndarray,
@@ -177,8 +183,11 @@ def main():
         label_names = list(le.classes_)
 
 
+        X_red, _, scaler, pca = prepare(X, args.pca_dims, args.random_state)
+        X2_red = apply_prepare(X2, scaler, pca)
+
         acc, per_cls = train_and_predict(
-            X, y_enc, X2, y_enc2, label_names, stype,
+            X_red, y_enc, X2_red, y_enc2, label_names, stype,
             X.shape[1], args.random_state, ax,
         )
         summary.append((stype, acc))

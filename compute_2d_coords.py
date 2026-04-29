@@ -18,8 +18,8 @@ import numpy as np
 
 # ── Device geometry ──────────────────────────────────────────────────────────
 # Measure on your recording device: distance in metres from the speaker to each mic.
-L1 = 0.16    # speaker → left microphone
-L2 = 0.03    # speaker → right microphone
+L1 = 0.165   # speaker → left microphone
+L2 = 0.0     # speaker → right microphone
 
 # ── Initial absolute path lengths ────────────────────────────────────────────
 # Total acoustic path (speaker → hand + hand → mic) at the start of each gesture.

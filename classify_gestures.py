@@ -24,10 +24,15 @@ from tsne_gestures import (
 )
 
 
-def load_dataset(iq_root: Path, target_len: int, signal_type: str):
+def load_dataset(iq_root: Path | list[Path], target_len: int, signal_type: str):
     features, labels, subjects, sources = [], [], [], []
 
-    for path in sorted(iq_root.rglob("*.npz")):
+    if isinstance(iq_root, Path):
+        file_list = sorted(iq_root.rglob("*.npz"))
+    else:
+        file_list = sorted(p for root in iq_root for p in root.rglob("*.npz"))
+
+    for path in file_list:
         with np.load(path) as data:
             gesture = str(data["gesture"])
             subject = str(data["subject"])
@@ -121,10 +126,14 @@ def classify_and_plot(
 
 def main():
     parser = argparse.ArgumentParser(description="XGBoost gesture classification.")
-    parser.add_argument("--iq-root", type=Path,
-                        default=Path("data") / "preliminary_data" / "IQ")
+    parser.add_argument("--iq-root", type=Path, nargs="+",
+                        default=[
+                            Path("data") / "4-24-2026-xavier" / "IQ",
+                            Path("data") / "4-21-2026-henry_horizontal" / "IQ",
+                            Path("data") / "4-24-2026-william" / "IQ",
+                        ])
     parser.add_argument("--output", type=Path,
-                        default=Path("data") / "preliminary_data" / "visualizations" / "06_xgboost_classification.png")
+                        default=Path("data") / "testing" / "06_xgboost_classification_all_subjects.png")
     parser.add_argument("--target-len", type=int, default=150)
     parser.add_argument("--pca-dims", type=int, default=30)
     parser.add_argument("--n-folds", type=int, default=5)
@@ -145,7 +154,10 @@ def main():
 
     for ax, stype in zip(axes, signal_types):
         print(f"\nLoading {stype}...")
-        X, labels, _, _ = load_dataset(args.iq_root, args.target_len, stype)
+        X, labels, _, _ = load_dataset(
+            args.iq_root if len(args.iq_root) > 1 else args.iq_root[0],
+            args.target_len, stype,
+        )
         if le.classes_.size == 0 if hasattr(le, "classes_") and le.classes_.size == 0 else not hasattr(le, "classes_") or le.classes_.size == 0:
             le.fit(labels)
         y_enc = le.transform(labels)
