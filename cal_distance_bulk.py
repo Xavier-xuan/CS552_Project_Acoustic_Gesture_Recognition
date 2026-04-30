@@ -12,7 +12,7 @@ SAVE_IQ = False
 
 STATIC_SEC = 0.8
 IGNORE_SEC = 0.2
-GESTURE_SEC = 2.0
+GESTURE_SEC = 1.0
 
 
 def derive_gesture_dir(input_npz: Path, chunked_root: Path) -> str:
@@ -89,15 +89,8 @@ def extract_path_change_curve(channel_audio: np.ndarray, carrier_freq: float,
             f"static/ignore/gesture windows, got {available_sec:.3f}s after filtering"
         )
 
-    # Fit a linear trend (DC + drift) to the static window and extrapolate
-    # over the full signal before extracting the gesture phase.
-    t = np.arange(len(filtered), dtype=np.float64)
-    t_s = t[:static_len]
-    static = filtered[:static_len]
-    real_c = np.polyfit(t_s, static.real, 1)
-    imag_c = np.polyfit(t_s, static.imag, 1)
-    baseline = np.polyval(real_c, t) + 1j * np.polyval(imag_c, t)
-    filtered = filtered - baseline
+    # Subtract the mean of the full IQ signal for static component removal.
+    filtered = filtered - filtered.mean()
 
     gesture_filtered = filtered[gesture_start:gesture_end]
     phase = np.unwrap(np.angle(gesture_filtered))
@@ -240,6 +233,15 @@ def calculate_chunk_distances(audio_chunks: np.ndarray, carrier_freqs: np.ndarra
         right_rmse_before[chunk_idx] = right_before.astype(np.float32)
         right_rmse_after[chunk_idx] = right_after.astype(np.float32)
 
+    # Best-frequency selection: pick the carrier with the highest std over the gesture window
+    left_best_freq = np.zeros((num_chunks, filtered_len), dtype=np.float32)
+    right_best_freq = np.zeros((num_chunks, filtered_len), dtype=np.float32)
+    for c in range(num_chunks):
+        l_std = left_per_freq[c].std(axis=1)
+        r_std = right_per_freq[c].std(axis=1)
+        left_best_freq[c] = left_per_freq[c, np.argmax(l_std)]
+        right_best_freq[c] = right_per_freq[c, np.argmax(r_std)]
+
     out = {
         "time_axis": time_axis.astype(np.float32),
         "new_sample_rate": np.array(new_sample_rate, dtype=np.float32),
@@ -254,6 +256,8 @@ def calculate_chunk_distances(audio_chunks: np.ndarray, carrier_freqs: np.ndarra
         "right_mean_distance": right_mean,
         "left_regression_distance": left_regression,
         "right_regression_distance": right_regression,
+        "left_best_freq_distance": left_best_freq,
+        "right_best_freq_distance": right_best_freq,
         "left_kept_counts": left_kept_counts,
         "right_kept_counts": right_kept_counts,
         "left_rmse_before": left_rmse_before,
