@@ -77,7 +77,6 @@ def main():
     total_len = (audio.shape[1] + DECIMATION_FACTOR - 1) // DECIMATION_FACTOR
     time_axis = np.arange(total_len) / new_sr
 
-    # 标注窗口边界
     static_end  = STATIC_SEC
     ignore_end  = STATIC_SEC + IGNORE_SEC
     gesture_start_t = time_axis[-1] - GESTURE_SEC
@@ -85,7 +84,6 @@ def main():
     fig, axes = plt.subplots(2, 1, figsize=(14, 8), sharex=True)
 
     for ax, (ch_audio, ch_name) in zip(axes, [(chunk_audio_l, "Left mic"), (chunk_audio_r, "Right mic")]):
-        # 取频率均值
         curves_before = np.stack([
             full_path_change(ch_audio, f, sample_rate, False) for f in CARRIER_FREQS
         ])
@@ -93,17 +91,14 @@ def main():
             full_path_change(ch_audio, f, sample_rate, True) for f in CARRIER_FREQS
         ])
 
-        # 画每个频率（淡色）
         for c in curves_before:
             ax.plot(time_axis, c, color="#d1d5db", linewidth=0.5, alpha=0.5)
         for c in curves_after:
             ax.plot(time_axis, c, color="#a7f3d0", linewidth=0.5, alpha=0.5)
 
-        # 画均值（粗线）
         ax.plot(time_axis, curves_before.mean(axis=0), color="#6b7280", linewidth=1.5, label="before (mean)")
         ax.plot(time_axis, curves_after.mean(axis=0),  color="#059669", linewidth=1.5, label="after (mean)")
 
-        # 窗口边界
         ax.axvspan(0,             static_end,      alpha=0.08, color="blue",   label=f"static ({STATIC_SEC}s)")
         ax.axvspan(static_end,    ignore_end,      alpha=0.08, color="orange", label=f"ignore ({IGNORE_SEC}s)")
         ax.axvspan(gesture_start_t, time_axis[-1], alpha=0.08, color="red",    label=f"gesture ({GESTURE_SEC}s)")
