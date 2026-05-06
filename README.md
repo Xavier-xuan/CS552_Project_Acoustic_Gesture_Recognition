@@ -5,3 +5,8 @@ Important files to run:
  - cal_1d_tracking_errors.py
  - predict_gestures_nopca.py
  - cal_1d_tracking_errors.py
+ - diagnose_freq.py
+ - diagnose_full_chunk.py
+ - run_static_component_comparison.sh
+ - run_predict_7030.sh
+ - run_predict_swipe_loso.sh

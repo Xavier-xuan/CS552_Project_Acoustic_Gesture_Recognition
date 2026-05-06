@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+uv run static_component_comparison.py --chunked-file data/4-27-2026-henry/chunked/right20to30/sample_right20to30-henry20260427150656.npz --output data/4-27-2026-henry/visualizations/static_component_removal_right20to30.png
+uv run static_component_comparison.py --chunked-file data/4-27-2026-henry/chunked/right30to20/sample_right30to20-henry20260427150530.npz --output data/4-27-2026-henry/visualizations/static_component_removal_right30to20.png
+uv run static_component_comparison.py --chunked-file data/4-27-2026-henry/chunked/right20to10/sample_right20to10-henry20260427150811.npz --output data/4-27-2026-henry/visualizations/static_component_removal_right20to10.png
+uv run static_component_comparison.py --chunked-file data/4-27-2026-henry/chunked/right10to20/sample_right10to20-henry20260427150411.npz --output data/4-27-2026-henry/visualizations/static_component_removal_right10to20.png
+uv run static_component_comparison.py --chunked-file data/4-27-2026-henry/chunked/left20to30/sample_left20to30-henry20260427151132.npz --output data/4-27-2026-henry/visualizations/static_component_removal_left20to30.png
+uv run static_component_comparison.py --chunked-file data/4-27-2026-henry/chunked/left30to20/sample_left30to20-henry20260427151249.npz --output data/4-27-2026-henry/visualizations/static_component_removal_left30to20.png
+uv run static_component_comparison.py --chunked-file data/4-27-2026-henry/chunked/left20to10/sample_left20to10-henry20260427150954.npz --output data/4-27-2026-henry/visualizations/static_component_removal_left20to10.png
+uv run static_component_comparison.py --chunked-file data/4-27-2026-henry/chunked/left10to20/sample_left10to20-henry20260427151408.npz --output data/4-27-2026-henry/visualizations/static_component_removal_left10to20.png
