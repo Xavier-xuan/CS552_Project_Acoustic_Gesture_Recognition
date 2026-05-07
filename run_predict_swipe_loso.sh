@@ -8,6 +8,16 @@ WILLIAM="4-30-2026-2-william"
 OUT="$DATA/testing"
 GESTURES="LeftSwipeHorizontal RightSwipeHorizontal"
 
+uv run chunk_by_chirp_bulk.py \
+  --raw-root "$DATA/$WILLIAM/raw" \
+  --chunked-root "$DATA/$WILLIAM/chunked" 
+
+# Step 2: compute IQ features
+uv run cal_distance_bulk.py \
+  --chunked-root "$DATA/$WILLIAM/chunked" \
+  --output-root "$DATA/$WILLIAM/IQ" 
+
+
 # leave-one-subject-out prediction
 echo "=== Swipe only — Test: Xavier (train: Henry + William) ==="
 uv run predict_gestures_nopca.py \
